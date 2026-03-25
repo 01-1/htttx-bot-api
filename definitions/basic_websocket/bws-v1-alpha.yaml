@@ -1,0 +1,297 @@
+openapi: "3.1.0"
+
+
+info:
+  title: HTTTX hexagonal tic-tac-toe bot/engine API for the "basic_websocket" capability.
+  version: v1-alpha
+  description: | 
+    Api for bots to implement to support the "basic_websocket" capability of the bot api.
+    This document only contains packet object definitions, and http handles.
+
+
+paths:
+  /game:
+    post:
+      summary: Websocket for communication with the bot.
+      description: |
+        The main and only websocket of this capability.
+
+        Once connection is made, a new, fresh evaluation session should be started. Alternatively, the bot can wait until
+        the game setup packet, in order to facilitate caching, reconnections, and other issue mitigation, by matching
+        the last known game state of previous sessions with the new board setup.
+
+        Once the connection is terminated, the bot may clear all the state related to this session.
+      responses:
+        "101":
+          description: Switching protocol. A websocket connection is made.
+
+
+components:
+  schemas:
+    HeartbeatPacket:
+      description: |
+        A packet for the bot to keep track of the state of the socket connection.
+      type: object
+      required:
+        - type
+        - waiting
+      properties:
+        type:
+          type: string
+          const: heartbeat
+        waiting:
+          description: | 
+            If this field is set, the client is waiting for the bot to make a move, or evaluate a position.
+            If the bot is not doing any processing, and is not aware what the client is waiting for, then an error 
+            state has occurred, and the bot must terminate the connection immediately.
+          type: boolean
+
+    ConfigurationPacket:
+      description: |
+        An optional packet sent from the client to the bot, containing configuration parameters for the bot.
+        Bot may support any field defined here, as well as any additional fields, of any type, not defined here. 
+        Fields that aren't defined in this spec should start with the prefix "x-".
+        
+        The client may not send any configuration parameter starting with the "x-" prefix, unless the client is
+        certain the bot supports this parameter.
+
+        The client may send any configuration parameter defined in this spec now, or in the future, without considering 
+        what parameters this specific bot supports. Thus the bot must ignore any parameters that do not start with 
+        the "x-" prefix, if it does not support them.
+      type: object
+      required:
+        - type
+      properties:
+        type:
+          type: string
+          const: config
+        depth:
+          description:
+            Optional depth configuration for the bot. The bot is free to interpret this value however it sees fit.
+            It is recommended to change the search depth for game-tree exploring type of bots to this value.
+          type: integer
+
+    GameSetupPacket:
+      description: |
+        A packet sent from the client to the bot before any moves are requested, and during the.
+        Contains the state of the board. The bot should The bot should not do any evaluation of the position until 
+        the first move, or evaluation is requested by the client.
+        Unless "basic_websocket.v1-alpha.resettable_state" is true in capabilities.json, this packet may only be sent
+        once, before the first move or evaluation is requested. Upon receiving any extra setup packet, the bot may
+        terminate the connection.
+        Unless "basic_websocket.v1-alpha.free_setup" is true in capabilities.json, this packet must contain exactly
+        one cross, at 0 0, and no circles.
+
+      type: object
+      required:
+        - type
+      properties:
+        type:
+          type: string
+          const: setup
+        board:
+          $ref: "#/components/schemas/Board"
+
+    MoveRequestPacket:
+      description: |
+        A packet sent from the client, requesting the bot to evaluate the position, and make a move.
+        May contain other moves made since the last move request or the game setup packet.
+      type: object
+      required:
+        - type
+        - side
+        - previous
+      properties:
+        type:
+          type: string
+          const: move_request
+        side:
+          description: |
+            The side for which the move is requested. Unless the bot defines "basic_websocket.v1-alpha.dual_sided"
+            as true in its capabilities.json, the client must request moves only for the same side 
+            within the same session.
+          type: string
+          enum: ['x', 'o']
+        previous:
+          description: |
+            An ordered array of moves made since the last move request. Empty if requesting the bot to make a first 
+            circle move.
+            By default must have the previous bot's move as the first, and the client's move as the second element.
+            
+            If "basic_websocket.v1-alpha.move_skips" is true in the bot's capabilities.json, the client may select
+            a move different from the one picked by the bot, and also provide more than 2 moves made since last request
+            at the same time, including some moves made on behalf of the bot's side.
+
+            If "basic_websocket.v1-alpha.dual_sided" is true in the bot's capabilities.json, the client may request
+            a move for any side adhering to the standard alternating order, 
+            unless "basic_websocket.v1-alpha.free_move_order" is also true. In which case the client may provide 
+            any number of moves in any order.
+
+            The client must not include any moves that have been sent already via board setup or other move requests, 
+            unless the evaluation of the previous move has been terminated.
+          type: array
+          items:
+            $ref: "#/components/schemas/Move"
+        move_time_limit:
+          description: | 
+            Optional time limit in seconds for the bot to make a move.
+            If "basic_websocket.v1-alpha.move_time_limit" is true in the bot's capabilities.json, the client may terminate
+            the connection after this amount of time has passed, if the bot didn't respond.
+
+    MoveResponsePacket:
+      description: |
+        A packet sent by the bot in response to a move request. Must not be sent unless a move request was received from
+        the client.
+
+        If "basic_websocket.v1-alpha.move_skips" is true in the bot's capabilities.json, the bot must not assume
+        that the move provided in this packet will be applied to the board, and must wait for the next move request
+        before updating its internal board state.
+      type: object
+      required:
+        - type
+        - move
+      properties:
+        type:
+          type: string
+          const: move_response
+        move:
+          $ref: "#/components/schemas/MoveOption"
+        considerations:
+          description: Optional, additional moves the bot has considered, ordered by best to worst.
+          type: array
+          items:
+            $ref: "#/components/schemas/MoveOption"
+
+    EvaluationRequestPacket:
+      description: |
+        A packet sent by the client to request current position evaluation, without applying any moves to the board.
+        Can only be sent by the client, if "basic_websocket.v1-alpha.evaluation" is true in the bot's capabilities.json.
+        The bot may do the evaluation differently for this packet type, than when responding to a move request. But
+        such behavior should be avoided, unless there are good reasons (i.e. configuration via config packet).
+      type: object
+      required:
+        - type
+        - side
+      properties:
+        type:
+          type: string
+          const: eval_request
+        side:
+          description: |
+            The side which is making the next move. Unless the bot defines "basic_websocket.v1-alpha.dual_sided"
+            as true in its capabilities.json, the client must request evaluations only for the same side 
+            within the same session, consistent with the move requests (i.e. if the client plays as circles, 
+            it may only request moves and evaluations with cross to move).
+          type: string
+          enum: ['x', 'o']
+    
+    EvaluationResponsePacket:
+      description: |
+        A packet sent by the bot in response to a move request. Must not be sent unless an evaluation request was
+        received from the client.
+      type: object
+      required:
+        - type
+        - evaluation
+      properties:
+        type:
+          type: string
+          const: eval_response
+        evaluation:
+          $ref: "#/components/schemas/PositionEvaluation"
+
+    MoveOption:
+      description: |
+        A single complete move a bot has evaluated, consisting of placing 2 pieces on the board.
+        If evaluation is provided, it must be of the board state after this move would be applied to it.
+      type: object
+      required:
+        - pieces
+      properties:
+        pieces:
+          type: array
+          items: 
+            $ref: "#/components/schemas/Coord"
+          minLength: 2
+          maxLength: 2
+        evaluation:
+          $ref: "#/components/schemas/PositionEvaluation"
+
+    PositionEvaluation:
+      description: |
+        Optional evaluation of the position by the bot. Can include any additional fields not defined by this API.
+      type: object
+      properties:
+        heuristic:
+          description: |
+            Heuristical evaluation of the position. Can be any real number.
+            Positive numbers show advantage for crosses. Negative show advantage for circles.
+            Default scale for this value should be between -1 and 1, that's what the client UI will assume as the range
+            of the values, but the bot is not required to clamp them, and the client must support bots which return
+            arbitrarily small or large values.
+          type: number
+        win_in:
+          description: |
+            Should be used when the bot found (or assumes there to be) a win for one of the sides in N moves.
+            If the win is found for crosses, N should be positive. If it is found for circles, N should be negated.
+            One move is assumed to be 2 crosses, or 2 circles placed. For example position oooo.oooo, cross to move,
+            would have a "win_in" value of -2. Move 1 would be cross's move, and move 2 is the winning move of circles.
+          type: integer
+
+    Move:
+      description: |
+        A single complete move of the game, consisting of placing 2 pieces on the board.
+      type: object
+      required:
+        - side
+        - pieces
+      properties:
+        side:
+          type: string
+          enum: ['x', 'o']
+        pieces:
+          type: array
+          items: 
+            $ref: "#/components/schemas/Coord"
+          minLength: 2
+          maxLength: 2
+
+    Coord:
+      description: Axial hex-coordinate. +q goes right, +r goes top-right.
+      type: object
+      properties:
+        q:
+          type: integer
+        r:
+          type: integer
+      required:
+        - q
+        - r
+
+    Board:
+      description: |
+        A board state, may be reachable by normal play, but can also be a pre-set position unreachable normally.
+        The client is responsible for only sending positions that do not contain a 6-in-a-row. A bot may validate
+        incoming positions, and terminate the socket connection if the client sends a position that already fulfills
+        the win conditions.
+      type: object
+      properties:
+        cells:
+          type: array
+          items:
+            type: object
+            properties:
+              q:
+                type: integer
+              r:
+                type: integer
+              p:
+                description: Piece on the coordinate
+                type: string
+                enum: ["x", "o"]
+            required:
+              - q
+              - r
+              - p
+      required:
+        - cells

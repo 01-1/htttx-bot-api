@@ -1,0 +1,138 @@
+openapi: "3.1.0"
+
+
+info:
+  title: HTTTX hexagonal tic-tac-toe bot/engine API for the "stateless" capability.
+  version: v1-alpha
+  description: Api for bots to implement to support the "stateless" capability of the bot api.
+
+
+paths:
+  /turn:
+    post:
+      summary: Request the bot to make a turn.
+      
+      requestBody:
+        description: Game state required to make a turn.
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MoveRequest"
+      
+      responses:
+        "200":
+          description: Turn successfully made.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MoveResponse"
+
+
+components:
+  schemas:
+    Coord:
+      description: Axial hex-coordinate. +q goes right, +r goes top-right.
+      type: object
+      properties:
+        q:
+          type: integer
+        r:
+          type: integer
+      required:
+        - q
+        - r
+
+    Board:
+      description: Current board state.
+      type: object
+      properties:
+        to_move:
+          type: string
+          enum: ["x", "o"]
+        cells:
+          type: array
+          items:
+            type: object
+            properties:
+              q:
+                type: integer
+              r:
+                type: integer
+              p:
+                description: Piece on the coordinate
+                type: string
+                enum: ["x", "o"]
+            required:
+              - q
+              - r
+              - p
+      required:
+        - to_move
+        - cells
+
+    PositionEvaluation:
+      description: Optional evaluation of the position by the bot. Can include any additional fields not defined by this API.
+      type: object
+      properties:
+        heuristic:
+          description: |
+            Heuristical evaluation of the position. Can be any real number.
+            Positive numbers show advantage for crosses. Negative show advantage for circles.
+            Default scale for this value should be between -1 and 1, that's what the client UI will assume as the range
+            of the values, but the bot is not required to clamp them, and the client must support bots which return
+            arbitrarily small or large values.
+          type: number
+        win_in:
+          description: |
+            Should be used when the bot found (or assumes there to be) a win for one of the sides in N moves.
+            If the win is found for crosses, N should be positive. If it is found for circles, N should be negated.
+            One move is assumed to be 2 crosses, or 2 circles placed. For example position oooo.oooo, cross to move,
+            would have a "win_in" value of -2. Move 1 would be cross's move, and move 2 is the winning move of circles.
+          type: integer
+
+    Move:
+      description: A single move, consisting of placing 2 pieces.
+      type: object
+      properties:
+        pieces:
+          type: array
+          items: 
+            $ref: "#/components/schemas/Coord"
+        evaluation:
+          $ref: "#/components/schemas/PositionEvaluation"
+      required:
+        - pieces
+
+    MoveRequest:
+      description: A request for the bot to evaluate the position and make a move.
+      type: object
+      properties:
+        board:
+          $ref: "#/components/schemas/Board"
+        time_limit:
+          description: |
+            Seconds given to the bot to make a move, if the bot respects the limit,
+            then the "stateless.v1-alpha.move_time_limit" property of the bot's capabilities.json should be set to true.
+
+            Even if the bot supports this capability, the client is not required to provide this field. 
+            In this case, it is assumed that the thinking time is unlimited.
+          type: number
+          minimum: 0
+      required:
+        - board
+    
+    MoveResponse:
+      description: Moves made
+      type: object
+      properties:
+        move:
+          description: Top move chosen by the bot.
+          $ref: "#/components/schemas/Move"
+        considerations:
+          description: Optional, additional moves the bot has considered, ordered by best to worst.
+          type: array
+          items:
+            $ref: "#/components/schemas/Move"
+      required:
+        - move
