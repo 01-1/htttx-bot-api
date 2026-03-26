@@ -23,14 +23,34 @@ paths:
 components:
   schemas:
     Capabilities:
-      description: Versioned capabilities of the bot. Should only include the capabilities that the bot fully supports.
+      description: | 
+        Versioned capabilities of the bot. Should only include the capabilities that the bot fully supports.
+        Optional "meta" field is not a capability, but an object containing information about the bot.
       type: object
       properties:
+        meta:
+          $ref: "#/components/schemas/Meta"
         stateless:
           $ref: "#/components/schemas/StatelessCapability"
         basic_websocket:
           $ref: "#/components/schemas/BasicWebsocketCapability"
 
+    Meta:
+      description: Meta information about the bot. A bot may define any number of any additional fields not defined here.
+      type: object
+      properties:
+        name:
+          description: Optional human readable name of the bot.
+          type: string
+        description:
+          description: Optional human readable description of the bot.
+          type: string
+        author:
+          description: Optional name or username of the Author of the bot.
+          type: string
+        version:
+          description: Optional version of the bot. Semantic versioning is preferred, but not required.
+          type: string
 
     StatelessCapability:
       description: Whether this bot can run answer stateless http move requests.
